@@ -124,9 +124,9 @@ public:
   void prioritizeModDownload(u32 mod_id);  
   void setDownloadListener(const std::function<void(u32 response_code, u32 mod_id)> &callback);
   void setUploadListener(const std::function<void(u32 response_code, u32 mod_id)> &callback);
-  std::list<QueuedModDownload *> getModDownloadQueue();
-  std::list<QueuedModfileUpload *> getModfileUploadQueue();
-  std::vector<modio::InstalledMod> getInstalledMods();
+  const std::list<QueuedModDownload *> getModDownloadQueue();
+  const std::list<QueuedModfileUpload *> getModfileUploadQueue();
+  const std::vector<modio::InstalledMod> getInstalledMods();
   u32 getModState(u32 mod_id);
 
   //Dependencies Methods

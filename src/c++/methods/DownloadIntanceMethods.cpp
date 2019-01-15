@@ -27,17 +27,17 @@ namespace modio
     modioPrioritizeModDownload(mod_id);
   }
 
-  std::list<QueuedModDownload *> Instance::getModDownloadQueue()
+  const std::list<QueuedModDownload *> Instance::getModDownloadQueue()
   {
     return curlwrapper::getModDownloadQueue();
   }
 
-  std::list<QueuedModfileUpload *> Instance::getModfileUploadQueue()
+  const std::list<QueuedModfileUpload *> Instance::getModfileUploadQueue()
   {
     return curlwrapper::getModfileUploadQueue();
   }
 
-  std::vector<modio::InstalledMod> Instance::getInstalledMods()
+  const std::vector<modio::InstalledMod> Instance::getInstalledMods()
   {
 	  std::vector<modio::InstalledMod> installed_mods;
 
