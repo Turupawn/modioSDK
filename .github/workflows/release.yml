@@ -13,10 +13,10 @@ jobs:
         name:
           - Ubuntu 18.04 GCC+libcurl-gnutls
           - Ubuntu 18.04 GCC+libcurl-gnutls +static
-          - Windows 2017 MSVC win32
-          - Windows 2017 MSVC win32 +static
-          - Windows 2017 MSVC win64
-          - Windows 2017 MSVC win64 +static
+          - Windows 2016 MSVC win32
+          - Windows 2016 MSVC win32 +static
+          - Windows 2016 MSVC win64
+          - Windows 2016 MSVC win64 +static
           - macOS 10.14 Clang
           - macOS 10.14 Clang +static
         include:
@@ -29,23 +29,23 @@ jobs:
             cmake-args: -DBUILD_SHARED_LIBS=OFF
             artifact-name: x86_64-linux-gnu+static
 
-          - name: Windows 2017 MSVC win32
-            os: windows-2017
+          - name: Windows 2016 MSVC win32
+            os: windows-2016
             cmake-args: -A Win32
             artifact-name: i686-windows-msvc
 
-          - name: Windows 2017 MSVC win32 +static
-            os: windows-2017
+          - name: Windows 2016 MSVC win32 +static
+            os: windows-2016
             cmake-args: -A Win32 -DBUILD_SHARED_LIBS=OFF
             artifact-name: i686-windows-msvc+static
 
-          - name: Windows 2017 MSVC win64
-            os: windows-2017
+          - name: Windows 2016 MSVC win64
+            os: windows-2016
             cmake-args: -A x64
             artifact-name: x86_64-windows-msvc
 
-          - name: Windows 2017 MSVC win64 +static
-            os: windows-2017
+          - name: Windows 2016 MSVC win64 +static
+            os: windows-2016
             cmake-args: -A x64 -DBUILD_SHARED_LIBS=OFF
             artifact-name: x86_64-windows-msvc+static
 
