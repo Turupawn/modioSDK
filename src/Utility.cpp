@@ -8,22 +8,32 @@
 #include <array>                                 // for array
 #include <chrono>                                // for milliseconds, durati...
 #include <ctime>                                 // for time
-#include <fstream>                               // for operator<<, ofstream
 #include <iomanip>                               // for operator<<, setw
 #include <string>                                // for string, operator+
 #include <vector>                                // for allocator, vector
 #include "Globals.h"                             // for ACCESS_TOKEN, VERSION
 #include "c/ModioC.h"                            // for MODIO_DEBUGLEVEL_LOG
-#include "dependencies/minizip/minizip.h"        // for check_file_exists
+#include "ghc/filesystem.hpp"
+#include <iostream>
+#include "dependencies/nlohmann/json.hpp"
+#include "utf8.h"
+
+#include "Filesystem.h"                          // for Filesystem::...
 
 #ifdef MODIO_LINUX_DETECTED
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <ext/alloc_traits.h>                    // for __alloc_traits<>::va...
+#include <errno.h>                               // for constants of errno
+#endif
+
+#if defined(MODIO_LINUX_DETECTED) || defined(MODIO_OSX_DETECTED)
+#include <pwd.h>                                 // for getting the users home path (getpwuid/getuid)
 #endif
 
 #ifdef MODIO_WINDOWS_DETECTED
+#  define USEWIN32IOAPI
 #  ifdef MODIO_UE4_DETECTED 
 #    include <Windows/MinWindows.h>
 #  else
@@ -31,7 +41,7 @@
 #    include <shlobj.h>
 #  endif
 #  include <strsafe.h>
-#  include "dependencies/dirent/dirent.h"
+#  include "WindowsFilesystem.h"
 //#include "vld.h"
 #endif
 
@@ -40,30 +50,42 @@
 #include <dirent.h>
 #endif
 
+// This should be char32_t, but MSVS2017 don't support char32_t
+// Table from https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP437.TXT
+static std::uint32_t CP437UTF32Table[] = {
+	0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008,
+	0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x000e, 0x000f, 0x0010, 0x0011,
+	0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, 0x0018, 0x0019, 0x001a,
+	0x001b, 0x001c, 0x001d, 0x001e, 0x001f, 0x0020, 0x0021, 0x0022, 0x0023,
+	0x0024, 0x0025, 0x0026, 0x0027, 0x0028, 0x0029, 0x002a, 0x002b, 0x002c,
+	0x002d, 0x002e, 0x002f, 0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035,
+	0x0036, 0x0037, 0x0038, 0x0039, 0x003a, 0x003b, 0x003c, 0x003d, 0x003e,
+	0x003f, 0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
+	0x0048, 0x0049, 0x004a, 0x004b, 0x004c, 0x004d, 0x004e, 0x004f, 0x0050,
+	0x0051, 0x0052, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, 0x0058, 0x0059,
+	0x005a, 0x005b, 0x005c, 0x005d, 0x005e, 0x005f, 0x0060, 0x0061, 0x0062,
+	0x0063, 0x0064, 0x0065, 0x0066, 0x0067, 0x0068, 0x0069, 0x006a, 0x006b,
+	0x006c, 0x006d, 0x006e, 0x006f, 0x0070, 0x0071, 0x0072, 0x0073, 0x0074,
+	0x0075, 0x0076, 0x0077, 0x0078, 0x0079, 0x007a, 0x007b, 0x007c, 0x007d,
+	0x007e, 0x007f, 0x00c7, 0x00fc, 0x00e9, 0x00e2, 0x00e4, 0x00e0, 0x00e5,
+	0x00e7, 0x00ea, 0x00eb, 0x00e8, 0x00ef, 0x00ee, 0x00ec, 0x00c4, 0x00c5,
+	0x00c9, 0x00e6, 0x00c6, 0x00f4, 0x00f6, 0x00f2, 0x00fb, 0x00f9, 0x00ff,
+	0x00d6, 0x00dc, 0x00a2, 0x00a3, 0x00a5, 0x20a7, 0x0192, 0x00e1, 0x00ed,
+	0x00f3, 0x00fa, 0x00f1, 0x00d1, 0x00aa, 0x00ba, 0x00bf, 0x2310, 0x00ac,
+	0x00bd, 0x00bc, 0x00a1, 0x00ab, 0x00bb, 0x2591, 0x2592, 0x2593, 0x2502,
+	0x2524, 0x2561, 0x2562, 0x2556, 0x2555, 0x2563, 0x2551, 0x2557, 0x255d,
+	0x255c, 0x255b, 0x2510, 0x2514, 0x2534, 0x252c, 0x251c, 0x2500, 0x253c,
+	0x255e, 0x255f, 0x255a, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256c,
+	0x2567, 0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256b,
+	0x256a, 0x2518, 0x250c, 0x2588, 0x2584, 0x258c, 0x2590, 0x2580, 0x03b1,
+	0x00df, 0x0393, 0x03c0, 0x03a3, 0x03c3, 0x00b5, 0x03c4, 0x03a6, 0x0398,
+	0x03a9, 0x03b4, 0x221e, 0x03c6, 0x03b5, 0x2229, 0x2261, 0x00b1, 0x2265,
+	0x2264, 0x2320, 0x2321, 0x00f7, 0x2248, 0x00b0, 0x2219, 0x00b7, 0x221a,
+	0x207f, 0x00b2, 0x25a0, 0x00a0 };
+
+
 namespace modio
 {
-
-#ifdef MODIO_WINDOWS_DETECTED
-static wchar_t *WideCharFromString(std::string const &str)
-{
-  // returns the number of required wchar_t WITHOUT terminating NUL
-  size_t rl = mbstowcs(NULL, str.c_str(), 0);
-  wchar_t *wcstr = (wchar_t *)malloc((rl + 1) * sizeof *wcstr);
-  mbstowcs(wcstr, str.c_str(), INT_MAX);
-  return wcstr;
-}
-
-static std::string StringFromWideChar(wchar_t const *str)
-{
-  // returns the number of required bytes WITHOUT terminating NUL
-  size_t rl = wcstombs(NULL, str, 0);
-  char *cstr = (char *)malloc(rl + 1);
-  wcstombs(cstr, str, INT_MAX);
-  std::string ret(cstr);
-  free(cstr);
-  return ret;
-}
-#endif
 
 //String methods
 std::string toString(i32 number)
@@ -130,7 +152,7 @@ void writeLogLine(const std::string &text, u32 debug_level)
   if (DEBUG_LEVEL < debug_level)
     return;
 
-  std::ofstream log_file(getModIODirectory() + "log.txt", std::ios::app);
+  std::ofstream log_file( modio::platform::ofstream(modio::getModIODirectory() + "log.txt", std::ios::app ) );
   log_file << "[" << modio::getCurrentTimeSeconds() << "] ";
   if (debug_level == MODIO_DEBUGLEVEL_ERROR)
   {
@@ -150,7 +172,7 @@ void writeLogLine(const std::string &text, u32 debug_level)
 
 void clearLog()
 {
-  std::ofstream log_file(getModIODirectory() + "log.txt");
+  std::ofstream log_file( modio::platform::ofstream(getModIODirectory() + "log.txt") );
   log_file.close();
 }
 
@@ -195,7 +217,7 @@ nlohmann::json toJson(const std::string &json_str)
 
 nlohmann::json openJson(const std::string &file_path)
 {
-  std::ifstream ifs(file_path);
+  std::ifstream ifs( modio::platform::ifstream(file_path) );
   nlohmann::json cache_file_json;
   if (ifs.is_open())
   {
@@ -210,12 +232,13 @@ nlohmann::json openJson(const std::string &file_path)
     }
   }
   ifs.close();
+  
   return cache_file_json;
 }
 
 void writeJson(const std::string &file_path, nlohmann::json json_object)
 {
-  std::ofstream ofs(file_path);
+  std::ofstream ofs( modio::platform::ofstream(file_path) );
   ofs << std::setw(4) << json_object << std::endl;
   ofs.close();
 }
@@ -223,36 +246,7 @@ void writeJson(const std::string &file_path, nlohmann::json json_object)
 // Filesystem methods
 
 #ifdef MODIO_WINDOWS_DETECTED
-static void writeLastErrorLog(const std::string &error_function)
-{
-  std::cerr << "[mod.io] Could not create directory on operating system Windows" << std::endl;
-  //Get the error message, if any.
-  DWORD errorMessageID = ::GetLastError();
-  if (errorMessageID == 0)
-  {
-    std::cerr << "[mod.io] Error: No error message has been recorded" << std::endl;
-    return; //No error message has been recorded
-  }
 
-  if (errorMessageID == 183)
-  {
-    std::cerr << "[mod.io] Error: The directory already exists" << std::endl;
-    modio::writeLogLine("The directory already exists.", MODIO_DEBUGLEVEL_LOG);
-    return;
-  }
-
-  LPSTR messageBuffer = nullptr;
-  size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                               NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-
-  std::string message(messageBuffer, size);
-
-  modio::writeLogLine("Error while using " + error_function + ": " + message, MODIO_DEBUGLEVEL_ERROR);
-  std::cerr << "[mod.io] Error: while using " + error_function + ": " + message << std::endl;
-
-  //Free the buffer.
-  LocalFree(messageBuffer);
-}
 #endif
 
 #if defined(MODIO_LINUX_DETECTED) || defined(MODIO_OSX_DETECTED)
@@ -262,92 +256,6 @@ static void removeEmptyDirectory(const std::string &path)
     writeLogLine(path + " removed", MODIO_DEBUGLEVEL_LOG);
   else
     writeLogLine("Could not remove " + path, MODIO_DEBUGLEVEL_ERROR);
-}
-#endif
-
-#ifdef MODIO_WINDOWS_DETECTED
-static DWORD deleteDirectoryWindows(const std::string &refcstrRootDirectory)
-{
-  HANDLE hFile;                    // Handle to directory
-  std::string strFilePath;         // Filepath
-  std::string strPattern;          // Pattern
-  WIN32_FIND_DATA FileInformation; // File information
-
-  strPattern = refcstrRootDirectory + "\\*.*";
-  wchar_t *strPattern_wc = WideCharFromString(strPattern);
-  hFile = ::FindFirstFile(strPattern_wc, &FileInformation);
-  free(strPattern_wc);
-  if (hFile != INVALID_HANDLE_VALUE)
-  {
-    do
-    {
-      if ( wcscmp (FileInformation.cFileName, L".") != 0
-          && wcscmp (FileInformation.cFileName, L"..") != 0)
-      {
-        std::wstring ws_filename(FileInformation.cFileName);
-        std::string str_filename(ws_filename.begin(), ws_filename.end());
-
-        writeLogLine("Deleting file: " + str_filename, MODIO_DEBUGLEVEL_LOG);
-
-        strFilePath.erase();
-        strFilePath = refcstrRootDirectory + "\\" + StringFromWideChar(FileInformation.cFileName);
-
-        if (FileInformation.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-        {
-          // Delete subdirectory
-          DWORD iRC = deleteDirectoryWindows(strFilePath);
-          if (iRC)
-            return iRC;
-        }
-        else
-        {
-          // Set file attributes
-          wchar_t *strFilePath_wc = WideCharFromString(strFilePath);
-          if (::SetFileAttributes(strFilePath_wc, FILE_ATTRIBUTE_NORMAL) == FALSE)
-          {
-            free(strFilePath_wc);
-            return ::GetLastError();
-          }
-
-          // Delete file
-          if (::DeleteFile(strFilePath_wc) == FALSE)
-          {
-            free(strFilePath_wc);
-            return ::GetLastError();
-          }
-
-          free(strFilePath_wc);
-        }
-      }
-    } while (::FindNextFile(hFile, &FileInformation) == TRUE);
-
-    // Close handle
-    ::FindClose(hFile);
-
-    DWORD dwError = ::GetLastError();
-    if (dwError != ERROR_NO_MORE_FILES)
-      return dwError;
-    else
-    {
-      // Set directory attributes
-      wchar_t *refcstrRootDirectory_wc = WideCharFromString(refcstrRootDirectory);
-      if (::SetFileAttributes(refcstrRootDirectory_wc, FILE_ATTRIBUTE_NORMAL) == FALSE)
-      {
-        free(refcstrRootDirectory_wc);
-        return ::GetLastError();
-      }
-
-      // Delete directory
-      if (::RemoveDirectory(refcstrRootDirectory_wc) == FALSE)
-      {
-        free(refcstrRootDirectory_wc);
-        return ::GetLastError();
-      }
-
-      free(refcstrRootDirectory_wc);
-    }
-  }
-  return 0;
 }
 #endif
 
@@ -373,29 +281,27 @@ std::string getFileExtension(std::string path)
   return path.substr(last_point + 1);
 }
 
-bool isDirectory(const std::string &directory)
+bool isDirectory(const std::string& directory)
 {
-  DIR *dir;
-  if ((dir = opendir(modio::addSlashIfNeeded(directory).c_str())) != NULL)
+  std::error_code ec;
+  ghc::filesystem::directory_entry directoryEntry(directory, ec);
+  if( directoryEntry.exists( ec ) && !ec )
   {
-    closedir(dir);
-    return true;
+      return directoryEntry.is_directory( ec ) && !ec;
   }
   return false;
 }
 
-bool directoryExists(const std::string &path)
+bool directoryExists(const std::string& filename)
 {
-  if (path == "")
-    return true;
-  DIR *dir = opendir(modio::addSlashIfNeeded(path).c_str());
-  if (dir)
+  if(filename == "")
   {
-    closedir(dir);
     return true;
   }
-  return false;
+
+  return isDirectory(filename);
 }
+
 
 std::string getDirectoryPath(const std::string &filename)
 {
@@ -408,184 +314,106 @@ std::string getDirectoryPath(const std::string &filename)
 
 bool fileExists(const std::string &directory)
 {
-  return check_file_exists(directory.c_str());
+  return ghc::filesystem::is_regular_file(directory);
 }
 
 std::vector<std::string> getFilenames(const std::string &directory)
 {
-  std::string directory_with_slash = modio::addSlashIfNeeded(directory);
+  std::vector<std::string> files;
 
-  std::vector<std::string> filenames;
-
-  struct dirent *ent;
-  DIR *dir;
-  if ((dir = opendir(directory_with_slash.c_str())) != NULL)
+  ghc::filesystem::path directoryPath( directory );
+  for( auto& p : ghc::filesystem::recursive_directory_iterator(directoryPath) )
   {
-    while ((ent = readdir(dir)) != NULL)
+    if( !p.is_directory() )
     {
-      DIR *current_dir = NULL;
-      std::string current_file_path = directory_with_slash + ent->d_name;
-      if ((current_dir = opendir(current_file_path.c_str())) != NULL && strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0)
-      {
-        std::vector<std::string> subdirectories_filenames = getFilenames(directory_with_slash + ent->d_name);
-        for (size_t i = 0; i < subdirectories_filenames.size(); i++)
-        {
-          filenames.push_back(std::string(ent->d_name) + "/" + subdirectories_filenames[i]);
-        }
-      }
-      else if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0)
-      {
-        filenames.push_back(ent->d_name);
-      }
-      if (current_dir)
-        closedir(current_dir);
+      files.push_back( ghc::filesystem::relative( p.path(), directoryPath ).generic_u8string() );
     }
-    closedir(dir);
   }
-  return filenames;
+
+  return files;
 }
 
 std::vector<std::string> getDirectoryNames(const std::string &root_directory)
 {
-  std::string directory_with_slash = modio::addSlashIfNeeded(root_directory);
+  std::vector<std::string> files;
 
-  std::vector<std::string> filenames;
-
-  struct dirent *ent;
-  DIR *dir;
-  if ((dir = opendir(directory_with_slash.c_str())) != NULL)
+  ghc::filesystem::path rootDirectoryPath(root_directory);
+  for (auto& p : ghc::filesystem::directory_iterator(rootDirectoryPath))
   {
-    while ((ent = readdir(dir)) != NULL)
+    if (p.is_directory())
     {
-      DIR *current_dir = NULL;
-      std::string current_file_path = directory_with_slash + ent->d_name;
-      if ((current_dir = opendir(current_file_path.c_str())) != NULL && strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0)
-      {
-        filenames.push_back(ent->d_name);
-      }
-      if (current_dir)
-        closedir(current_dir);
+      files.push_back(ghc::filesystem::relative(p.path(), rootDirectoryPath).generic_u8string());
     }
-    closedir(dir);
   }
-  return filenames;
+
+  return files;
 }
 
-bool createDirectory(const std::string &directory)
+bool createDirectory(const std::string& directory)
 {
-  if (modio::directoryExists(directory))
+  std::error_code ec;
+  bool result = ghc::filesystem::create_directory(directory, ec);
+  if( !result && ec )
   {
-    std::clog << "[mod.io] Directory already exists:" + directory << std::endl;
-    return true;
-  }
-
-  writeLogLine("Creating directory " + directory, MODIO_DEBUGLEVEL_LOG);
-#if defined(MODIO_LINUX_DETECTED) || defined(MODIO_OSX_DETECTED)
-  mkdir(directory.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-#endif
-
-#ifdef MODIO_WINDOWS_DETECTED
-  wchar_t *director_wc = WideCharFromString(directory);
-  if (!CreateDirectory(director_wc, NULL))
-  {
-    std::cerr << "[mod.io] Error: Could not create directory: " << directory << std::endl;
-    writeLastErrorLog("CreateDirectory");
+    writeLogLine("Failed to create directory \"" + directory + "\" with error: " + ec.message(), MODIO_DEBUGLEVEL_WARNING);
     return false;
   }
-  else
-  {
-    std::clog << "[mod.io] Directory created:" + directory << std::endl;
-  }
-  free(director_wc);
-#endif
+
   return true;
 }
 
 bool removeDirectory(const std::string &directory)
 {
-#ifdef MODIO_WINDOWS_DETECTED
-  DWORD error_code = deleteDirectoryWindows(directory);
-  if (error_code != 0)
-    modio::writeLogLine("Could not remove directory, error code: " + modio::toString((u32)error_code), MODIO_DEBUGLEVEL_ERROR);
-  return error_code == 0;
-#else
-
-  DIR *dir;
-  struct dirent *entry;
-  char path[PATH_MAX];
-
-  std::string directory_with_slash = modio::addSlashIfNeeded(directory);
-
-  dir = opendir(directory_with_slash.c_str());
-  if (dir == NULL)
+  std::error_code ec;
+  bool result = ghc::filesystem::remove_all( directory, ec ) != static_cast<std::uintmax_t>(-1) || !ec;
+  if( ec )
   {
-    writeLogLine("Error opendir()", MODIO_DEBUGLEVEL_LOG);
-    return false;
+    writeLogLine( "Failed to delete directory \"" + directory + "\" with error: " + ec.message(), MODIO_DEBUGLEVEL_WARNING );
   }
 
-  while ((entry = readdir(dir)) != NULL)
-  {
-    if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
-    {
-      snprintf(path, (size_t)PATH_MAX, "%s%s", directory_with_slash.c_str(), entry->d_name);
-      DIR *subdir = opendir(path);
-      if (subdir)
-      {
-        closedir(subdir);
-        removeDirectory(path);
-      }
-      writeLogLine("Deleting: " + std::string(path), MODIO_DEBUGLEVEL_LOG);
-      removeFile(path);
-    }
-  }
-  closedir(dir);
-  writeLogLine("Deleting: " + directory_with_slash, MODIO_DEBUGLEVEL_LOG);
-  removeEmptyDirectory(directory_with_slash);
-
-  return true;
-#endif
+  return result;
 }
 
 void removeFile(const std::string &filename)
 {
-  if (remove(filename.c_str()) != 0)
+  std::error_code ec;
+  bool result = ghc::filesystem::remove(filename, ec);
+  if ( !result && ec )
   {
-    writeLogLine("Could not remove: " + filename + " error code: " + modio::toString(errno), MODIO_DEBUGLEVEL_ERROR);
-    writeLogLine(std::strerror(errno), MODIO_DEBUGLEVEL_ERROR);
+    writeLogLine("Could not remove file \"" + filename + "\" with error: " + ec.message(), MODIO_DEBUGLEVEL_ERROR);
   }
-  else
-    writeLogLine(filename + " removed", MODIO_DEBUGLEVEL_LOG);
+  else if( result ) // Don't output anything if no file was deleted
+  {
+    writeLogLine("\"" + filename + "\" removed", MODIO_DEBUGLEVEL_LOG);
+  }
 }
 
 double getFileSize(const std::string &file_path)
-{
+{ 
   double file_size = 0;
-  FILE *fp = fopen(file_path.c_str(), "rb");
-  if (fp)
+  std::error_code ec;
+  ghc::filesystem::directory_entry file(file_path, ec);
+  if( !ec && ghc::filesystem::is_regular_file( file ) && ghc::filesystem::exists( file.status() ) )
   {
-    fseek(fp, 0, SEEK_END);
-    file_size = ftell(fp);
-    fclose(fp);
+    file_size = file.file_size();
   }
+
   return file_size;
 }
 
-void createPath(const std::string &path)
+bool createPath(const std::string &path_str)
 {
-  std::string current_path;
-  std::string tokenized_path = path;
-  size_t slash_position;
+  ghc::filesystem::path path( path_str );
+  
+  std::error_code ec;
+  bool result = ghc::filesystem::create_directories( path.parent_path().native(), ec );
 
-  while (tokenized_path.length())
+  if( !result && ec )
   {
-    slash_position = tokenized_path.find('/');
-    if (slash_position == std::string::npos)
-      break;
-    current_path += tokenized_path.substr(0, slash_position) + "/";
-    tokenized_path.erase(tokenized_path.begin(), tokenized_path.begin() + slash_position + 1);
-
-    createDirectory(current_path);
+    writeLogLine( "Failed to create path: \"" + path.parent_path().native() + "\" with error: " + ec.message(), MODIO_DEBUGLEVEL_ERROR );
+    return false;
   }
+  return true;
 }
 
 std::vector<std::string> getHeaders()
@@ -667,18 +495,26 @@ std::string getMyDocumentsPath()
   PWSTR   ppsz_path;
   HRESULT handle = SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &ppsz_path);
 
-  std::wstring my_documents_path_wstring;
-  if (SUCCEEDED(handle)) {
-	  my_documents_path_wstring = ppsz_path;
+  if ( !SUCCEEDED(handle) ) {
+    // If we didn't succeed, ensure that we return a non null value
+    return "";
   }
 
+  std::wstring my_documents_path_wstring = ppsz_path;
   CoTaskMemFree(ppsz_path);
+  std::replace(my_documents_path_wstring.begin(), my_documents_path_wstring.end(), '\\', '/');
 
-  std::string my_documents_path_string(my_documents_path_wstring.begin(), my_documents_path_wstring.end());
-
-  std::replace( my_documents_path_string.begin(), my_documents_path_string.end(), '\\', '/');
-
-  return my_documents_path_string;
+  // Convert to UTF-8
+  return modio::windows_platform::wstrToUtf8(my_documents_path_wstring);
+#elif defined(MODIO_LINUX_DETECTED) || defined(MODIO_OSX_DETECTED)
+  const char *homedir = getenv("HOME");
+  if ( homedir == nullptr )
+  {
+    // check /etc/passwd for the homedir specified in there
+    homedir = getpwuid( getuid() )->pw_dir;
+  }
+  // std::string shouldn't be constructed with a nullptr
+  return homedir ? homedir : "";
 #endif
   return "";
 }
@@ -698,5 +534,23 @@ std::string randomString(u32 length)
   std::generate_n( str.begin(), length, randchar );
   return str;
 }
+
+
+std::string CP437ToUTF8(const std::string& string)
+{
+	std::vector<std::uint32_t> utf32_string;
+	utf32_string.resize(string.size());
+
+	for (std::size_t i = 0; i < string.size(); ++i)
+	{
+		utf32_string[i] = CP437UTF32Table[(unsigned char)string[i]];
+	}
+
+	std::string result;
+	utf8::utf32to8(utf32_string.begin(), utf32_string.end(), std::back_inserter(result));
+
+	return result;
+}
+
 
 } // namespace modio

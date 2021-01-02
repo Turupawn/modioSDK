@@ -14,6 +14,7 @@
 #include "c/methods/callbacks/RatingsCallbacks.h"
 #include "c/methods/callbacks/ReportsCallbacks.h"
 #include "c/methods/callbacks/SubscriptionsCallbacks.h"
+#include "c/methods/callbacks/GameCallbacks.h"
 #include "c/methods/callbacks/TagCallbacks.h"
 #include <iostream>
 
@@ -120,24 +121,22 @@ void modioInit(u32 environment, u32 game_id, bool retrieve_mods_from_other_games
   modio::RETRIEVE_MODS_FROM_OTHER_GAMES = retrieve_mods_from_other_games;
   modio::POLLING_ENABLED = polling_enabled;
   
-  if (root_path)
-    modio::ROOT_PATH = root_path;
+  modio::ROOT_PATH = root_path ? root_path : "";
   
   std::clog << "[mod.io] Creating directories" << std::endl;
 
   modio::ADDITIONAL_GAMEDIR_PATH = "";
 
-  if(!modio::createDirectory(modio::getModIODirectory()))
+  if(!modio::createPath(modio::getModIODirectory()))
   {
     std::clog << "Could not create the .modio/ directory, retying with alternative path: " << modio::getMyDocumentsPath() << std::endl;
     modio::ROOT_PATH = modio::getMyDocumentsPath();
-    modio::createDirectory(modio::getModIODirectory());
     modio::ADDITIONAL_GAMEDIR_PATH = "game_" + modio::toString(game_id);
-    modio::createDirectory(modio::getModIODirectory());
+    modio::createPath(modio::getModIODirectory());
   }
-  modio::createDirectory(modio::getModIODirectory() + "mods/");
-  modio::createDirectory(modio::getModIODirectory() + "cache/");
-  modio::createDirectory(modio::getModIODirectory() + "tmp/");
+  modio::createPath(modio::getModIODirectory() + "mods/");
+  modio::createPath(modio::getModIODirectory() + "cache/");
+  modio::createPath(modio::getModIODirectory() + "tmp/");
 
   modio::clearLog();
 
@@ -152,12 +151,12 @@ void modioInit(u32 environment, u32 game_id, bool retrieve_mods_from_other_games
   
   modio::writeLogLine(modio::VERSION, MODIO_DEBUGLEVEL_LOG);
 
-  if (environment == MODIO_ENVIRONMENT_TEST)
-    modio::MODIO_URL = "https://api.test.mod.io/";
+  modio::MODIO_URL = environment == MODIO_ENVIRONMENT_LIVE ? "https://api.mod.io/" : "https://api.test.mod.io/";
   modio::GAME_ID = game_id;
-  modio::API_KEY = api_key;
+  modio::API_KEY = api_key ? api_key : "";
 
   loadEventPollingFile();
+  // This calls potentially setup modio::ACCESS_TOKEN from cached authentication data, so it has to be called before accessing that token
   loadAuthenticationFile();
 
   modio::curlwrapper::initCurl();
@@ -227,6 +226,7 @@ void modioShutdown()
   clearReportsCallbackParams();
   clearSubscriptionsCallbackParams();
   clearTagCallbackParams();
+  clearGameCallbackParams();
 
   modioFreeUser(&modio::current_user);
 

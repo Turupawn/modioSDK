@@ -31,8 +31,23 @@
 *.out
 *.app
 
+# Visual Studio
 .vs/
 .vscode/
+CMakeSettings.json
+
+# KDevelop
+.kdev4/
+*.kdev4
+
+# CLion
+.idea/
+cmake-build-debug/
+
+# Mac OS
+.DS_Store
+
+# 
 build/
 
 src/modio.so
